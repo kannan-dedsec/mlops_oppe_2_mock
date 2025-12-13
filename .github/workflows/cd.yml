@@ -13,7 +13,7 @@ jobs:
       uses: actions/checkout@v4
 
     # -----------------------------
-    # GCP Auth
+    # GCP Authentication
     # -----------------------------
     - name: Authenticate to GCP
       uses: google-github-actions/auth@v2
@@ -24,10 +24,22 @@ jobs:
       uses: google-github-actions/setup-gcloud@v2
 
     # -----------------------------
+    # FIX: Install + Enable GKE auth plugin
+    # -----------------------------
+    - name: Install GKE auth plugin
+      run: |
+        gcloud components install gke-gcloud-auth-plugin --quiet
+
+    - name: Enable GKE auth plugin
+      run: |
+        echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+
+    # -----------------------------
     # Docker build & push
     # -----------------------------
     - name: Configure Docker
-      run: gcloud auth configure-docker us-central1-docker.pkg.dev
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
     - name: Build Docker Image
       run: |
@@ -51,26 +63,30 @@ jobs:
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/hpa.yaml
 
+    # -----------------------------
+    # Wait for LoadBalancer IP
+    # -----------------------------
     - name: Wait for Service IP
       run: |
-        for i in {1..20}; do
+        for i in {1..30}; do
           SERVICE_IP=$(kubectl get svc fraud-model-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$SERVICE_IP" ]; then
             echo "SERVICE_IP=$SERVICE_IP" >> $GITHUB_ENV
-            break
+            echo "Service available at $SERVICE_IP"
+            exit 0
           fi
+          echo "Waiting for LoadBalancer IP..."
           sleep 10
         done
+        echo "LoadBalancer IP not assigned"
+        exit 1
 
     # -----------------------------
-    # Install Locust
+    # Load Testing (Locust)
     # -----------------------------
     - name: Install Locust
       run: pip install locust
 
-    # -----------------------------
-    # Run Load Test
-    # -----------------------------
     - name: Run Locust Load Test
       run: |
         locust \
@@ -94,7 +110,7 @@ jobs:
       run: npm install -g @dvcorg/cml
 
     # -----------------------------
-    # CML Report
+    # Publish CML Report
     # -----------------------------
     - name: Publish CML Report
       env:
