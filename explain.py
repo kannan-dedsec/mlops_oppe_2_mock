@@ -57,22 +57,26 @@ with mlflow.start_run(run_name="post_training_analysis"):
 
     v0_loc_preds = loc_model.predict(X_v0_loc)
 
-    # ---- Fairness
+    # ---- Fairness (v0 only, as intended)
     dp_diff = demographic_parity_difference(
-    y_true=y_v0_loc,
-    y_pred=v0_loc_preds,
-    sensitive_features=X_v0_loc[SENSITIVE_COL],)
-
+        y_true=y_v0_loc,
+        y_pred=v0_loc_preds,
+        sensitive_features=X_v0_loc[SENSITIVE_COL],
+    )
 
     mlflow.log_metric("demographic_parity_difference", dp_diff)
 
-    # ---- SHAP
-    try:
-        underlying_model = loc_model._model_impl
-    except AttributeError:
-        underlying_model = loc_model
+    # ---- SHAP (pyfunc-safe, correct way)
+    background = X_v0_loc.sample(
+        n=min(100, len(X_v0_loc)),
+        random_state=42
+    )
 
-    explainer = shap.Explainer(underlying_model, X_v0_loc)
+    explainer = shap.Explainer(
+        loc_model.predict,   # ✅ explain prediction function
+        background
+    )
+
     shap_values = explainer(X_v0_loc)
 
     plt.figure(figsize=(10, 6))
