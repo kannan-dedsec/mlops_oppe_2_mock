@@ -58,10 +58,12 @@ with mlflow.start_run(run_name="post_training_analysis"):
     v0_loc_preds = loc_model.predict(X_v0_loc)
 
     # ---- Fairness
-    dp_diff = demographic_parity_difference(
-        y_pred=v0_loc_preds,
-        sensitive_features=X_v0_loc[SENSITIVE_COL],
-    )
+dp_diff = demographic_parity_difference(
+    y_true=y_v0_loc,
+    y_pred=v0_loc_preds,
+    sensitive_features=X_v0_loc[SENSITIVE_COL],
+)
+
 
     mlflow.log_metric("demographic_parity_difference", dp_diff)
 
