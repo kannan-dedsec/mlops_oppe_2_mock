@@ -1,8 +1,12 @@
 import mlflow
 import mlflow.sklearn
 import pandas as pd
+
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 
 # -----------------------------
 # CONFIGURATION
@@ -30,26 +34,55 @@ def load_data(train_path, val_path):
     return X_train, y_train, X_val, y_val
 
 
+def build_pipeline(X):
+    categorical_cols = X.select_dtypes(include=["object", "category"]).columns
+    numeric_cols = X.select_dtypes(exclude=["object", "category"]).columns
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", StandardScaler(), numeric_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+        ]
+    )
+
+    model = LogisticRegression(
+        max_iter=3000,
+        solver="lbfgs",
+        n_jobs=-1
+    )
+
+    pipeline = Pipeline(
+        steps=[
+            ("preprocessing", preprocessor),
+            ("model", model),
+        ]
+    )
+
+    return pipeline
+
+
 def train_and_log(model_name, train_path, val_path, metadata):
     X_train, y_train, X_val, y_val = load_data(train_path, val_path)
 
-    with mlflow.start_run(run_name=model_name):
-        model = LogisticRegression(max_iter=1000)
-        model.fit(X_train, y_train)
+    pipeline = build_pipeline(X_train)
 
-        preds = model.predict(X_val)
+    with mlflow.start_run(run_name=model_name):
+        pipeline.fit(X_train, y_train)
+
+        preds = pipeline.predict(X_val)
         f1 = f1_score(y_val, preds)
 
         mlflow.log_metric("f1_score", f1)
         mlflow.log_params(metadata)
 
         mlflow.sklearn.log_model(
-            sk_model=model,
-            artifact_path="model",
+            sk_model=pipeline,
+            name="model",
             registered_model_name=model_name
         )
 
-        print(f"Model logged: {model_name} | F1={f1:.4f}")
+        print(f"✅ Logged model: {model_name} | F1={f1:.4f}")
+
 
 # -----------------------------
 # Main
@@ -78,7 +111,7 @@ def main():
             metadata={"dataset": "poisoned", "poisoning": level}
         )
 
-    # Location-augmented model (optional)
+    # Location-augmented model
     try:
         train_and_log(
             model_name="fraud_location_augmented",
@@ -87,7 +120,8 @@ def main():
             metadata={"dataset": "location_augmented"}
         )
     except FileNotFoundError:
-        print("Location-augmented dataset not found. Skipping.")
+        print("⚠️ Location dataset not found, skipping.")
+
 
 if __name__ == "__main__":
     main()
