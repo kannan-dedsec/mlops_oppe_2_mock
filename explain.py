@@ -13,12 +13,12 @@ MLFLOW_TRACKING_URI = "http://34.173.223.45:8100"
 EXPERIMENT_NAME = "fraud-detection-1"
 
 MODEL_NAME = "fraud_location_augmented"   # registered model name
-MODEL_STAGE = "Production"                # or "None"/"Staging"
+MODEL_STAGE = "None"                # or "None"/"Staging"
 
 TARGET_COL = "Class"
 SENSITIVE_COL = "location"
 
-V0_PATH = "data/v0/clean/train.csv"
+V0_PATH = "data/v0/with_location/train.csv"
 V1_PATH = "data/v1/clean/train.csv"
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
