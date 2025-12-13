@@ -4,8 +4,12 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+# -----------------------------
+# Configuration
+# -----------------------------
+GCS_URI = "gs://mlops-week4-ga/transactions.csv"
+DVC_REMOTE_URL = "gs://mlops-week4-ga/dvcstore"
 
-GCS_URI = "gs://mlops-week4-ga/transactions.csv"  
 DATA_DIR = "data"
 RAW_DIR = os.path.join(DATA_DIR, "raw")
 
@@ -17,16 +21,19 @@ VAL_SPLIT = 0.2
 
 np.random.seed(RANDOM_SEED)
 
+# -----------------------------
+# Utilities
+# -----------------------------
 def mkdir(path):
     os.makedirs(path, exist_ok=True)
+
+def run(cmd):
+    subprocess.run(cmd, check=True)
 
 def copy_from_gcs():
     mkdir(RAW_DIR)
     local_path = os.path.join(RAW_DIR, "transactions.csv")
-    subprocess.run(
-        ["gsutil", "cp", GCS_URI, local_path],
-        check=True
-    )
+    run(["gsutil", "cp", GCS_URI, local_path])
     return local_path
 
 def detect_target_column(df):
@@ -62,7 +69,32 @@ def poison_labels(df, target_col, flip_ratio):
     poisoned.loc[flip_idx, target_col] = 1
     return poisoned
 
+# -----------------------------
+# DVC helpers
+# -----------------------------
+def setup_dvc():
+    if not os.path.exists(".dvc"):
+        run(["dvc", "init"])
 
+    # Add remote if not exists
+    result = subprocess.run(
+        ["dvc", "remote", "list"],
+        capture_output=True,
+        text=True
+    )
+
+    if "gcsremote" not in result.stdout:
+        run(["dvc", "remote", "add", "-d", "gcsremote", DVC_REMOTE_URL])
+
+def dvc_version_data():
+    run(["dvc", "add", DATA_DIR])
+    run(["git", "add", f"{DATA_DIR}.dvc", ".gitignore"])
+    run(["git", "commit", "-m", "Version data artifacts with DVC"])
+    run(["dvc", "push"])
+
+# -----------------------------
+# Main pipeline
+# -----------------------------
 def main():
     # Step 1: Get raw data
     csv_path = copy_from_gcs()
@@ -90,10 +122,9 @@ def main():
     df_v0_loc["location"] = np.random.choice(
         ["Location_A", "Location_B"], size=len(df_v0_loc)
     )
-
     split_train_val(df_v0_loc, os.path.join(V0_DIR, "with_location"))
 
-    # Step 5: Poisoned datasets (based on clean v0)
+    # Step 5: Poisoned datasets
     poison_configs = {
         "poisoned_2_percent": 0.02,
         "poisoned_8_percent": 0.08,
@@ -104,7 +135,11 @@ def main():
         poisoned_df = poison_labels(df_v0, target_col, ratio)
         split_train_val(poisoned_df, os.path.join(V0_DIR, name))
 
-    print("\nPipeline completed successfully.")
+    # Step 6: DVC versioning
+    setup_dvc()
+    dvc_version_data()
+
+    print("\nPipeline + DVC versioning completed successfully.")
     print(f"Target column detected: {target_col}")
     print(f"Time column used: {time_col or 'row order'}")
 
