@@ -73,8 +73,8 @@ def main():
     for model_name, (path, level) in poison_configs.items():
         train_and_log(
             model_name=model_name,
-            train_path=f"{path}/train.csv",
-            val_path=f"{path}/val.csv",
+            train_path=f"{path}.csv",
+            val_path=f"data/v0/clean/val.csv",
             metadata={"dataset": "poisoned", "poisoning": level}
         )
 
