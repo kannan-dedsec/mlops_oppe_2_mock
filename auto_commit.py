@@ -7,14 +7,14 @@ import sys
 # -----------------------------
 
 # Extensions to track
-TRACKED_EXTENSIONS = [
+TRACKED_EXTENSIONS = (
     ".py",
     ".dvc",
     ".yaml",
     ".yml",
     ".json",
     ".md",
-]
+)
 
 GIT_REMOTE_NAME = "origin"
 GIT_BRANCH = "main"
@@ -31,19 +31,45 @@ def run(cmd, capture=False):
     )
 
 def get_changed_files():
-    result = run(["git", "status", "--porcelain"], capture=True)
+    """
+    Returns a list of changed file paths including:
+    - untracked (??)
+    - modified (M)
+    - added (A)
+    - renamed (R -> new path)
+    Excludes deleted files.
+    """
+    result = run(
+        ["git", "status", "--porcelain=v1", "-z"],
+        capture=True
+    )
+
+    entries = result.stdout.split("\0")
     files = []
 
-    for line in result.stdout.splitlines():
-        # Format: XY filename
-        files.append(line[3:])
+    for entry in entries:
+        if not entry:
+            continue
+
+        status = entry[:2]
+        path = entry[3:]
+
+        # Skip deleted files
+        if "D" in status:
+            continue
+
+        # Handle renames: "old -> new"
+        if "->" in path:
+            path = path.split("->", 1)[1].strip()
+
+        files.append(path)
 
     return files
 
 def filter_by_extension(files):
     return [
         f for f in files
-        if any(f.endswith(ext) for ext in TRACKED_EXTENSIONS)
+        if f.endswith(TRACKED_EXTENSIONS)
     ]
 
 # -----------------------------
@@ -51,7 +77,7 @@ def filter_by_extension(files):
 # -----------------------------
 def main():
     # Ensure we're in a git repo
-    if not os.path.exists(".git"):
+    if not os.path.isdir(".git"):
         print("ERROR: This directory is not a git repository.")
         sys.exit(1)
 
@@ -62,13 +88,12 @@ def main():
         print("No relevant changes detected. Nothing to commit.")
         return
 
-    print("The following files will be committed:")
+    print("\nThe following files will be committed:")
     for f in relevant_files:
         print(f"  - {f}")
 
     # Stage files
-    for f in relevant_files:
-        run(["git", "add", f])
+    run(["git", "add", "--"] + relevant_files)
 
     # Prompt commit message
     commit_msg = input("\nEnter commit message: ").strip()
@@ -77,11 +102,10 @@ def main():
         sys.exit(1)
 
     run(["git", "commit", "-m", commit_msg])
-
-    # Push using existing auth
     run(["git", "push", GIT_REMOTE_NAME, GIT_BRANCH])
 
     print("\nGit add, commit, and push completed successfully.")
 
+# -----------------------------
 if __name__ == "__main__":
     main()
