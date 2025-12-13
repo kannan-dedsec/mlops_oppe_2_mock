@@ -91,6 +91,7 @@ def dvc_version_data():
     run(["git", "add", f"{DATA_DIR}.dvc", ".gitignore"])
     run(["git", "commit", "-m", "Version data artifacts with DVC"])
     run(["dvc", "push"])
+    run(["git", "push"])
 
 # -----------------------------
 # Main pipeline
