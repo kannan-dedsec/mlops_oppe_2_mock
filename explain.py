@@ -2,6 +2,7 @@ import mlflow
 import pandas as pd
 import shap
 import matplotlib.pyplot as plt
+import numpy as np
 
 from sklearn.metrics import f1_score, precision_score, recall_score
 from fairlearn.metrics import demographic_parity_difference
@@ -22,6 +23,10 @@ SENSITIVE_COL = "location"
 V0_LOCATION_PATH = "data/v0/with_location/train.csv"
 V1_CLEAN_PATH = "data/v1/clean/train.csv"
 
+# SHAP limits (CRITICAL)
+SHAP_BACKGROUND_SIZE = 50
+SHAP_EXPLAIN_SIZE = 200
+
 # -----------------------------
 # MLflow setup
 # -----------------------------
@@ -40,7 +45,7 @@ y_v0 = v0_loc[TARGET_COL]
 X_v1 = v1_clean.drop(columns=[TARGET_COL])
 y_v1 = v1_clean[TARGET_COL]
 
-# 🔑 SHAP-safe dataset (drop categorical column)
+# SHAP-safe numeric data
 X_v0_shap = X_v0.drop(columns=[SENSITIVE_COL])
 
 # -----------------------------
@@ -49,16 +54,15 @@ X_v0_shap = X_v0.drop(columns=[SENSITIVE_COL])
 with mlflow.start_run(run_name="post_training_analysis"):
 
     # =====================================================
-    # 1️⃣ Fairness + Explainability (location model)
+    # 1️⃣ Fairness + Explainability
     # =====================================================
     loc_model = mlflow.pyfunc.load_model(
         f"models:/{LOCATION_MODEL}/{MODEL_STAGE}"
     )
 
-    # ---- Predictions (FULL features, incl. location)
+    # ---- Fairness (FULL data)
     v0_preds = loc_model.predict(X_v0)
 
-    # ---- Fairness (v0 only)
     dp_diff = demographic_parity_difference(
         y_true=y_v0,
         y_pred=v0_preds,
@@ -67,27 +71,44 @@ with mlflow.start_run(run_name="post_training_analysis"):
 
     mlflow.log_metric("demographic_parity_difference", dp_diff)
 
-    # ---- SHAP (NUMERIC FEATURES ONLY)
+    # =====================================================
+    # SHAP (FAST MODE)
+    # =====================================================
+
+    # Sample background + explain rows
     background = X_v0_shap.sample(
-        n=min(100, len(X_v0_shap)),
+        n=min(SHAP_BACKGROUND_SIZE, len(X_v0_shap)),
         random_state=42
     )
 
-    # Wrapper so SHAP sees correct input
+    explain_data = X_v0_shap.sample(
+        n=min(SHAP_EXPLAIN_SIZE, len(X_v0_shap)),
+        random_state=99
+    )
+
+    # Wrapper for SHAP
     def predict_wrapper(X):
         X_full = X.copy()
         X_full[SENSITIVE_COL] = X_v0[SENSITIVE_COL].iloc[:len(X)].values
         return loc_model.predict(X_full)
 
-    explainer = shap.Explainer(
+    # Use KernelExplainer explicitly (controlled)
+    explainer = shap.KernelExplainer(
         predict_wrapper,
         background
     )
 
-    shap_values = explainer(X_v0_shap)
+    shap_values = explainer.shap_values(
+        explain_data,
+        nsamples=100   # ⬅ MASSIVE speedup
+    )
 
     plt.figure(figsize=(10, 6))
-    shap.summary_plot(shap_values, X_v0_shap, show=False)
+    shap.summary_plot(
+        shap_values,
+        explain_data,
+        show=False
+    )
     plt.tight_layout()
     plt.savefig("shap_summary.png")
     plt.close()
@@ -95,7 +116,7 @@ with mlflow.start_run(run_name="post_training_analysis"):
     mlflow.log_artifact("shap_summary.png")
 
     # =====================================================
-    # 2️⃣ Concept Drift (clean v0 model → v1 data)
+    # 2️⃣ Concept Drift (clean model → v1)
     # =====================================================
     clean_model = mlflow.pyfunc.load_model(
         f"models:/{CLEAN_MODEL}/{MODEL_STAGE}"
