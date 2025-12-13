@@ -9,12 +9,14 @@ import mlflow
 import mlflow.sklearn
 
 # -----------------------------
-# OpenTelemetry imports
+# OpenTelemetry imports (STABLE)
 # -----------------------------
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.sdk.trace.export import (
+    SimpleSpanProcessor,
+    ConsoleSpanExporter,
+)
 
 # -----------------------------
 # Configuration
@@ -25,12 +27,14 @@ MODEL_NAME = "fraud_clean_v0"
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 # -----------------------------
-# Tracer setup (Cloud Trace)
+# Tracer setup (portable & safe)
 # -----------------------------
 trace.set_tracer_provider(TracerProvider())
 tracer = trace.get_tracer(__name__)
-span_processor = BatchSpanProcessor(CloudTraceSpanExporter())
-trace.get_tracer_provider().add_span_processor(span_processor)
+
+trace.get_tracer_provider().add_span_processor(
+    SimpleSpanProcessor(ConsoleSpanExporter())
+)
 
 # -----------------------------
 # Structured logging
