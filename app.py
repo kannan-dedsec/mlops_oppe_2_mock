@@ -19,7 +19,7 @@ from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 # -----------------------------
 # Configuration
 # -----------------------------
-MLFLOW_TRACKING_URI = "http://YOUR_MLFLOW_SERVER:5000"
+MLFLOW_TRACKING_URI = "http://34.55.250.137:8100"
 MODEL_NAME = "fraud_clean_v0"
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
