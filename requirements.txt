@@ -8,6 +8,7 @@ matplotlib
 dvc
 feast
 dvc[gs]
+opentelemetry-sdk==1.22.0
 black
 flake8
 mlflow
