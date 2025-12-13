@@ -2,12 +2,11 @@ name: CD - Build & Deploy to GKE
 
 on:
   push:
-    branches: [ main ] 
+    branches: [ main ]
 
 permissions:
   contents: write
   pull-requests: write
-
 
 jobs:
   deploy:
@@ -17,9 +16,9 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # -----------------------------
-    # GCP Authentication
-    # -----------------------------
+    # =============================
+    # GCP AUTH
+    # =============================
     - name: Authenticate to GCP
       uses: google-github-actions/auth@v2
       with:
@@ -28,23 +27,17 @@ jobs:
     - name: Setup gcloud
       uses: google-github-actions/setup-gcloud@v2
 
-    # -----------------------------
-    # FIX: Install + Enable GKE auth plugin
-    # -----------------------------
     - name: Install GKE auth plugin
-      run: |
-        gcloud components install gke-gcloud-auth-plugin --quiet
+      run: gcloud components install gke-gcloud-auth-plugin --quiet
 
     - name: Enable GKE auth plugin
-      run: |
-        echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+      run: echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
 
-    # -----------------------------
-    # Docker build & push
-    # -----------------------------
+    # =============================
+    # BUILD & PUSH IMAGE
+    # =============================
     - name: Configure Docker
-      run: |
-        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
     - name: Build Docker Image
       run: |
@@ -55,9 +48,9 @@ jobs:
       run: |
         docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/mlops-repo/fraud-api:latest
 
-    # -----------------------------
-    # Deploy to GKE
-    # -----------------------------
+    # =============================
+    # DEPLOY TO GKE
+    # =============================
     - name: Get GKE Credentials
       run: |
         gcloud container clusters get-credentials mlops-cluster --region us-central1
@@ -68,38 +61,41 @@ jobs:
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/hpa.yaml
 
-    # -----------------------------
-    # Wait for LoadBalancer IP
-    # -----------------------------
-    - name: Wait for Service IP
+    # =============================
+    # WAIT FOR SERVICE
+    # =============================
+    - name: Wait for LoadBalancer IP
       run: |
         for i in {1..30}; do
           SERVICE_IP=$(kubectl get svc fraud-model-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$SERVICE_IP" ]; then
             echo "SERVICE_IP=$SERVICE_IP" >> $GITHUB_ENV
-            echo "Service available at $SERVICE_IP"
             exit 0
           fi
-          echo "Waiting for LoadBalancer IP..."
           sleep 10
         done
-        echo "LoadBalancer IP not assigned"
         exit 1
 
-    # -----------------------------
-    # Load Testing (Locust)
-    # -----------------------------
+    # =============================
+    # CAPTURE HPA BASELINE
+    # =============================
+    - name: Capture HPA baseline
+      run: |
+        kubectl get hpa fraud-model-hpa -o json > hpa_before.json
+        kubectl get pods -l app=fraud-model -o name | wc -l > pods_before.txt
 
+    # =============================
+    # LOAD TEST
+    # =============================
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.10"
-    
+
     - name: Install Locust
       run: |
         python -m pip install --upgrade pip
         python -m pip install locust
-
 
     - name: Run Locust Load Test
       run: |
@@ -112,9 +108,36 @@ jobs:
           --headless \
           --csv=locust_report
 
-    # -----------------------------
-    # Setup Node.js + CML
-    # -----------------------------
+    # =============================
+    # CAPTURE POST-LOAD STATE
+    # =============================
+    - name: Capture HPA after load
+      run: |
+        kubectl get hpa fraud-model-hpa -o json > hpa_after.json
+        kubectl get pods -l app=fraud-model -o name | wc -l > pods_after.txt
+        kubectl describe hpa fraud-model-hpa > hpa_events.txt
+
+    # =============================
+    # ASSERT AUTOSCALING
+    # =============================
+    - name: Assert autoscaling occurred
+      run: |
+        BEFORE=$(cat pods_before.txt)
+        AFTER=$(cat pods_after.txt)
+
+        echo "Pods before load: $BEFORE"
+        echo "Pods after load:  $AFTER"
+
+        if [ "$AFTER" -le "$BEFORE" ]; then
+          echo "❌ Autoscaling did NOT occur"
+          exit 1
+        fi
+
+        echo "✅ Autoscaling verified"
+
+    # =============================
+    # CML REPORT
+    # =============================
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
@@ -123,96 +146,54 @@ jobs:
     - name: Install CML
       run: npm install -g @dvcorg/cml
 
-    # -----------------------------
-    # Publish CML Report
-    # -----------------------------
     - name: Publish CML Report
       env:
-        REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO_TOKEN: ${{ secrets.TOKEN }}
       run: |
         echo "# 🚀 Deployment & Load Test Report" > report.md
         echo "" >> report.md
 
-        # -----------------------------
-        # Service Info
-        # -----------------------------
         echo "## 🌍 Service Information" >> report.md
-        echo "" >> report.md
-        echo "- **Public Endpoint:** http://${{ env.SERVICE_IP }}" >> report.md
-        echo "- **Platform:** Google Kubernetes Engine (GKE)" >> report.md
-        echo "- **Deployment Type:** Rolling Update" >> report.md
+        echo "- **Endpoint:** http://${{ env.SERVICE_IP }}" >> report.md
+        echo "- **Platform:** Google Kubernetes Engine" >> report.md
         echo "" >> report.md
 
-        # -----------------------------
-        # HPA Status (formatted)
-        # -----------------------------
+        NAME=$(jq -r '.metadata.name' hpa_after.json)
+        MIN=$(jq -r '.spec.minReplicas' hpa_after.json)
+        MAX=$(jq -r '.spec.maxReplicas' hpa_after.json)
+        CUR=$(jq -r '.status.currentReplicas' hpa_after.json)
+        CPU_T=$(jq -r '.spec.metrics[0].resource.target.averageUtilization' hpa_after.json)
+        CPU_C=$(jq -r '.status.currentMetrics[0].resource.current.averageUtilization' hpa_after.json)
+        BEFORE=$(cat pods_before.txt)
+        AFTER=$(cat pods_after.txt)
+
         echo "## ⚖️ Autoscaling Status (HPA)" >> report.md
-        echo "" >> report.md
-        
         echo "| Metric | Value |" >> report.md
         echo "|--------|-------|" >> report.md
-        
-        kubectl get hpa fraud-model-hpa -o json | jq -r '
-        "| Name | \(.metadata.name) |",
-        "| Min Pods | \(.spec.minReplicas) |",
-        "| Max Pods | \(.spec.maxReplicas) |",
-        "| Current Pods | \(.status.currentReplicas) |",
-        "| CPU Target (%) | \(.spec.metrics[0].resource.target.averageUtilization) |",
-        "| CPU Current (%) | \(.status.currentMetrics[0].resource.current.averageUtilization) |"
-        ' >> report.md
-        
-        echo "" >> report.md
-        echo "**Interpretation:** CPU utilization exceeded the target threshold, triggering automatic horizontal scaling." >> report.md
+        echo "| Name | $NAME |" >> report.md
+        echo "| Min Pods | $MIN |" >> report.md
+        echo "| Max Pods | $MAX |" >> report.md
+        echo "| Pods Before Load | $BEFORE |" >> report.md
+        echo "| Pods After Load | $AFTER |" >> report.md
+        echo "| CPU Target (%) | $CPU_T |" >> report.md
+        echo "| CPU Current (%) | $CPU_C |" >> report.md
         echo "" >> report.md
 
-        # -----------------------------
-        # Locust Summary (parsed)
-        # -----------------------------
-        echo "## 📊 Load Test Summary (Locust)" >> report.md
-        echo "" >> report.md
+        echo "## 📜 Autoscaling Events" >> report.md
+        echo '```' >> report.md
+        grep -A5 "Events:" hpa_events.txt >> report.md
+        echo '```' >> report.md
 
+        echo "## 📊 Load Test Summary" >> report.md
         echo "| Metric | Value |" >> report.md
-        echo "|------|------|" >> report.md
-
-        awk -F',' '
-        NR==2 {
+        echo "|--------|-------|" >> report.md
+        awk -F',' 'NR==2 {
           printf("| Total Requests | %s |\n", $3);
           printf("| Failed Requests | %s |\n", $4);
-          printf("| Requests / sec | %.2f |\n", $10);
+          printf("| Req/sec | %.2f |\n", $10);
           printf("| Median Latency (ms) | %s |\n", $5);
           printf("| Avg Latency (ms) | %.2f |\n", $6);
           printf("| Max Latency (ms) | %.2f |\n", $8);
         }' locust_report_stats.csv >> report.md
-
-        echo "" >> report.md
-
-        # -----------------------------
-        # Latency Percentiles
-        # -----------------------------
-        echo "## ⏱ Latency Percentiles (ms)" >> report.md
-        echo "" >> report.md
-        echo "| Percentile | Latency (ms) |" >> report.md
-        echo "|-----------|--------------|" >> report.md
-
-        awk -F',' '
-        NR==2 {
-          printf("| 50%% | %s |\n", $12);
-          printf("| 75%% | %s |\n", $14);
-          printf("| 90%% | %s |\n", $16);
-          printf("| 95%% | %s |\n", $17);
-          printf("| 99%% | %s |\n", $19);
-        }' locust_report_stats.csv >> report.md
-
-        echo "" >> report.md
-
-        # -----------------------------
-        # Conclusion
-        # -----------------------------
-        echo "## ✅ Conclusion" >> report.md
-        echo "" >> report.md
-        echo "- The service handled sustained load with **zero failures**." >> report.md
-        echo "- Horizontal Pod Autoscaler scaled the deployment automatically." >> report.md
-        echo "- Latency remained within acceptable bounds during scaling events." >> report.md
-        echo "- The deployment is **production-ready under current load assumptions**." >> report.md
 
         cml comment create report.md
