@@ -23,9 +23,10 @@ SENSITIVE_COL = "location"
 V0_LOCATION_PATH = "data/v0/with_location/train.csv"
 V1_CLEAN_PATH = "data/v1/clean/train.csv"
 
-# SHAP limits (CRITICAL)
+# SHAP limits (CRITICAL for speed)
 SHAP_BACKGROUND_SIZE = 50
 SHAP_EXPLAIN_SIZE = 200
+SHAP_NSAMPLES = 100
 
 # -----------------------------
 # MLflow setup
@@ -45,7 +46,7 @@ y_v0 = v0_loc[TARGET_COL]
 X_v1 = v1_clean.drop(columns=[TARGET_COL])
 y_v1 = v1_clean[TARGET_COL]
 
-# SHAP-safe numeric data
+# SHAP-safe numeric features only
 X_v0_shap = X_v0.drop(columns=[SENSITIVE_COL])
 
 # -----------------------------
@@ -54,13 +55,13 @@ X_v0_shap = X_v0.drop(columns=[SENSITIVE_COL])
 with mlflow.start_run(run_name="post_training_analysis"):
 
     # =====================================================
-    # 1️⃣ Fairness + Explainability
+    # 1️⃣ Fairness + Explainability (location model)
     # =====================================================
     loc_model = mlflow.pyfunc.load_model(
         f"models:/{LOCATION_MODEL}/{MODEL_STAGE}"
     )
 
-    # ---- Fairness (FULL data)
+    # ---- Fairness (v0 only, full features)
     v0_preds = loc_model.predict(X_v0)
 
     dp_diff = demographic_parity_difference(
@@ -72,10 +73,10 @@ with mlflow.start_run(run_name="post_training_analysis"):
     mlflow.log_metric("demographic_parity_difference", dp_diff)
 
     # =====================================================
-    # SHAP (FAST MODE)
+    # SHAP (FAST + STABLE)
     # =====================================================
 
-    # Sample background + explain rows
+    # Background & explanation samples
     background = X_v0_shap.sample(
         n=min(SHAP_BACKGROUND_SIZE, len(X_v0_shap)),
         random_state=42
@@ -86,13 +87,15 @@ with mlflow.start_run(run_name="post_training_analysis"):
         random_state=99
     )
 
-    # Wrapper for SHAP
+    # 🔑 FIXED SHAP WRAPPER
+    # - No indexing assumptions
+    # - No categorical math
+    # - Deterministic
     def predict_wrapper(X):
-        X_full = X.copy()
-        X_full[SENSITIVE_COL] = X_v0[SENSITIVE_COL].iloc[:len(X)].values
-        return loc_model.predict(X_full)
+        X_df = pd.DataFrame(X, columns=X_v0_shap.columns)
+        X_df[SENSITIVE_COL] = "Location_A"  # fixed baseline for SHAP
+        return loc_model.predict(X_df)
 
-    # Use KernelExplainer explicitly (controlled)
     explainer = shap.KernelExplainer(
         predict_wrapper,
         background
@@ -100,7 +103,7 @@ with mlflow.start_run(run_name="post_training_analysis"):
 
     shap_values = explainer.shap_values(
         explain_data,
-        nsamples=100   # ⬅ MASSIVE speedup
+        nsamples=SHAP_NSAMPLES
     )
 
     plt.figure(figsize=(10, 6))
@@ -116,7 +119,7 @@ with mlflow.start_run(run_name="post_training_analysis"):
     mlflow.log_artifact("shap_summary.png")
 
     # =====================================================
-    # 2️⃣ Concept Drift (clean model → v1)
+    # 2️⃣ Concept Drift (clean v0 model → v1 data)
     # =====================================================
     clean_model = mlflow.pyfunc.load_model(
         f"models:/{CLEAN_MODEL}/{MODEL_STAGE}"
