@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 # CONFIGURATION
 # -----------------------------
 MLFLOW_TRACKING_URI = "http://34.55.250.137:8100"
-EXPERIMENT_NAME = "fraud-detection"
+EXPERIMENT_NAME = "fraud-detection-1"
 TARGET_COL = "Class"
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
