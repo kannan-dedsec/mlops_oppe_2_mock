@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import logging
 import time
 import json
+import pandas as pd   # ✅ REQUIRED FIX
 
 import mlflow
 import mlflow.sklearn
@@ -155,8 +156,8 @@ async def predict(request_body: PredictRequest, request: Request):
         try:
             features = request_body.features
 
-            # sklearn Pipeline handles preprocessing internally
-            X = [list(features.values())]
+            # ✅ FIX: pass DataFrame, not list
+            X = pd.DataFrame([features])
             prediction = int(MODEL.predict(X)[0])
 
             latency = round((time.time() - start_time) * 1000, 2)
