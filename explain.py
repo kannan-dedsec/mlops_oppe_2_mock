@@ -18,8 +18,8 @@ MODEL_STAGE = "Production"                # or "None"/"Staging"
 TARGET_COL = "Class"
 SENSITIVE_COL = "location"
 
-V0_PATH = "data/clean_v0.csv"
-V1_PATH = "data/clean_v1.csv"
+V0_PATH = "data/v0/clean/train.csv"
+V1_PATH = "data/v1/clean/train.csv"
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 mlflow.set_experiment(EXPERIMENT_NAME)
