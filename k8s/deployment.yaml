@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-model
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fraud-model
+  template:
+    metadata:
+      labels:
+        app: fraud-model
+    spec:
+      containers:
+      - name: fraud-model
+        image: us-central1-docker.pkg.dev/eng-copilot-473911-g1/mlops-repo/fraud-api:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://34.55.250.137:8100"
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
