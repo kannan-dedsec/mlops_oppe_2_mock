@@ -148,16 +148,22 @@ jobs:
         # -----------------------------
         echo "## ⚖️ Autoscaling Status (HPA)" >> report.md
         echo "" >> report.md
-        kubectl get hpa fraud-model-hpa -o custom-columns=\
-        NAME:.metadata.name,\
-        MIN:.spec.minReplicas,\
-        MAX:.spec.maxReplicas,\
-        CURRENT:.status.currentReplicas,\
-        CPU_TARGET:.spec.metrics[0].resource.target.averageUtilization,\
-        CPU_CURRENT:.status.currentMetrics[0].resource.current.averageUtilization \
-        >> report.md
+        
+        echo "| Metric | Value |" >> report.md
+        echo "|--------|-------|" >> report.md
+        
+        kubectl get hpa fraud-model-hpa -o json | jq -r '
+        .items[0] |
+        "| Name | \(.metadata.name) |",
+        "| Min Pods | \(.spec.minReplicas) |",
+        "| Max Pods | \(.spec.maxReplicas) |",
+        "| Current Pods | \(.status.currentReplicas) |",
+        "| CPU Target (%) | \(.spec.metrics[0].resource.target.averageUtilization) |",
+        "| CPU Current (%) | \(.status.currentMetrics[0].resource.current.averageUtilization) |"
+        ' >> report.md
+        
         echo "" >> report.md
-        echo "**Interpretation:** Under load, the deployment automatically scaled based on CPU utilization." >> report.md
+        echo "**Interpretation:** CPU utilization exceeded the target threshold, triggering automatic horizontal scaling." >> report.md
         echo "" >> report.md
 
         # -----------------------------
