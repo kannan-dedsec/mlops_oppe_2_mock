@@ -1,0 +1,118 @@
+name: CD - Build & Deploy to GKE
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # -----------------------------
+    # GCP Auth
+    # -----------------------------
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
+
+    # -----------------------------
+    # Docker build & push
+    # -----------------------------
+    - name: Configure Docker
+      run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+    - name: Build Docker Image
+      run: |
+        docker build \
+          -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/mlops-repo/fraud-api:latest .
+
+    - name: Push Docker Image
+      run: |
+        docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/mlops-repo/fraud-api:latest
+
+    # -----------------------------
+    # Deploy to GKE
+    # -----------------------------
+    - name: Get GKE Credentials
+      run: |
+        gcloud container clusters get-credentials mlops-cluster --region us-central1
+
+    - name: Deploy to GKE
+      run: |
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/hpa.yaml
+
+    - name: Wait for Service IP
+      run: |
+        for i in {1..20}; do
+          SERVICE_IP=$(kubectl get svc fraud-model-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ -n "$SERVICE_IP" ]; then
+            echo "SERVICE_IP=$SERVICE_IP" >> $GITHUB_ENV
+            break
+          fi
+          sleep 10
+        done
+
+    # -----------------------------
+    # Install Locust
+    # -----------------------------
+    - name: Install Locust
+      run: pip install locust
+
+    # -----------------------------
+    # Run Load Test
+    # -----------------------------
+    - name: Run Locust Load Test
+      run: |
+        locust \
+          -f locustfile.py \
+          --host=http://${{ env.SERVICE_IP }} \
+          --users 50 \
+          --spawn-rate 10 \
+          --run-time 1m \
+          --headless \
+          --csv=locust_report
+
+    # -----------------------------
+    # Setup Node.js + CML
+    # -----------------------------
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18
+
+    - name: Install CML
+      run: npm install -g @dvcorg/cml
+
+    # -----------------------------
+    # CML Report
+    # -----------------------------
+    - name: Publish CML Report
+      env:
+        REPO_TOKEN: ${{ secrets.TOKEN }}
+      run: |
+        echo "# 🚀 Deployment & Load Test Report" > report.md
+        echo "" >> report.md
+
+        echo "## 🌍 Service URL" >> report.md
+        echo "http://${{ env.SERVICE_IP }}" >> report.md
+        echo "" >> report.md
+
+        echo "## ⚖️ HPA Status" >> report.md
+        kubectl get hpa fraud-model-hpa >> report.md
+        echo "" >> report.md
+
+        echo "## 🔥 Load Test Summary (Locust)" >> report.md
+        cat locust_report_stats.csv >> report.md
+        echo "" >> report.md
+
+        cml comment create report.md
