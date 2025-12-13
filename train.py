@@ -7,7 +7,7 @@ from sklearn.metrics import f1_score
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-MLFLOW_TRACKING_URI = "http://YOUR_MLFLOW_SERVER:5000"
+MLFLOW_TRACKING_URI = "http://34.55.250.137:8100"
 EXPERIMENT_NAME = "fraud-detection"
 TARGET_COL = "Class"
 
