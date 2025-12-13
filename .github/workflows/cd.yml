@@ -85,7 +85,7 @@ jobs:
     # Load Testing (Locust)
     # -----------------------------
     - name: Install Locust
-      run: pip install locust
+      run: pip install locust gevent zope.event zope.interface
 
     - name: Run Locust Load Test
       run: |
